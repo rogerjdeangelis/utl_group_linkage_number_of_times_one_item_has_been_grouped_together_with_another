@@ -11,6 +11,10 @@ THREE SOLUTIONS
        2. Corresp then SQL ARRAY  (least code and very fast?)
        3. Corresp then IML DOT product  (used SAS IML because WPS does not support DOSUBL)
        4. Pure WPS/PROC R  DOT Product
+       
+       
+See Additional elegant hash solution by Paul on end
+Paul Dorfman <sashole@BELLSOUTH.NET>
 
 I gave up on a datastep solution with and without 'proc corresp', see end of message for my attempt
 
@@ -358,4 +362,118 @@ data wantDat;
         var[
 
 run;quit;
+
+
+*____             _
+|  _ \ __ _ _   _| |
+| |_) / _` | | | | |
+|  __/ (_| | |_| | |
+|_|   \__,_|\__,_|_|
+
+;
+It shouldn't be difficult to do it using the hash object. The only subtleties are:
+
+(a) two iterators are needed for table H to pair the values of COUNTRY
+before storing the value pairs in table V together with the requisite counts.
+(b) some index gymnastics to ensure that the pairing is going one-way.
+
+The duplicate values of COUNTRY within each BY group are killed automatically
+by table H. If such dupes should need to be accounted for,
+the argument tag MULTIDATA:"Y" could be added.
+
+data have ;
+  input group $ country $ ;
+  cards ;
+Group1  SE
+Group1  DE
+Group2  SE
+Group2  DE
+Group2  FI
+Group3  SE
+Group3  FI
+;
+run ;
+
+data _null_ ;
+  if _n_ = 1 then do ;
+    dcl hash h (ordered:"a") ;
+    h.definekey ("country") ;
+    h.definedone () ;
+    dcl hiter i ("h") ;
+    dcl hiter j ("h") ;
+    dcl hash v (ordered:"a") ;
+    v.definekey  ("var1", "var2") ;
+    v.definedata ("var1", "var2", "val") ;
+    v.definedone () ;
+  end ;
+  do until (last.group) ;
+    set have end = eof ;
+    by group ;
+    h.ref() ;
+  end ;
+  do _i = 1 by 1 while (i.next() = 0) ;
+    var1 = country ;
+    do _j = 1 by 1 while (j.next() = 0) ;
+      if _j <= _i then continue ;
+      var2 = country ;
+      if v.find() ne 0 then val = 1 ;
+      else                  val + 1 ;
+      v.replace() ;
+    end ;
+  end ;
+  h.clear() ;
+  if eof then v.output (dataset:"want") ;
+run ;
+
+Another way of doing the same would be to leave the table H only with the
+function of unduplicating COUNTRY within each GROUP and use an array to do
+the pairing. If the pairs were numerous, I suspect it would be quite a bit
+efficient than using two iterators. The trade-off is the need to pre-comute
+the size of the array at the expense of an extra pass through the input or allocate
+it as "big enough" (as it is done below).
+
+data _null_ ;
+  if _n_ = 1 then do ;
+    dcl hash h (ordered:"a") ;
+    h.definekey ("country") ;
+    h.definedone () ;
+    dcl hiter ih ("h") ;
+    dcl hash v (ordered:"a") ;
+    v.definekey  ("var1", "var2") ;
+    v.definedata ("var1", "var2", "val") ;
+    v.definedone () ;
+  end ;
+  array vv [100] $ 2 _temporary_ ;
+  do until (last.group) ;
+    set have end = eof ;
+    by group ;
+    if h.check() = 0 then continue ;
+    n = sum (n, 1) ;
+    vv[n] = country ;
+    h.add() ;
+  end ;
+  h.clear() ;
+  do i = 1 to n - 1 ;
+    var1 = vv[i] ;
+    do j = i + 1 to n ;
+      var2 = vv[j] ;
+      if v.find() ne 0 then val = 1 ;
+      else                  val + 1 ;
+      v.replace() ;
+    end ;
+  end ;
+  if eof then v.output (dataset:"want") ;
+run ;
+
+Finally, in the steps above, advantage is taken of the fact that the input is sorted by GROUP.
+However, it's not difficult to recode them in order to get rid of this prerequisite.
+
+Best regards,
+
+Paul Dorfman
+
+
+
+
+
 
